@@ -25,20 +25,20 @@ uint16_t yAxisAccel;
 uint16_t zAxisAccel;
 
 //Yaw, Pitch, and Roll Angles
-uint16_t yawAngle;
-uint16_t pitchAngle;
-uint16_t rollAngle;
+float yawAngle;
+float pitchAngle;
+float rollAngle;
 
-uint16_t steeringMin = 1000;
-uint16_t steeringMax = 2000;
-uint16_t steeringCenter = 1500;
+const uint16_t steeringMin = 1000;
+const uint16_t steeringMax = 2000;
+const uint16_t steeringCenter = 1500;
 
-uint16_t throttleMin = 1000;
-uint16_t throttleMax = 2000;
-uint16_t throttleCenter = 0;
+const uint16_t throttleMin = 1000;
+const uint16_t throttleMax = 2000;
+const uint16_t throttleCenter = 1000;
 
-#define Kd 1
-#define ThrottleCutRate .01
+const uint16_t SteeringCutRate = 20;
+const uint16_t ThrottleCutRate = 10;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -46,7 +46,7 @@ uint16_t throttleCenter = 0;
 #define THROTTLE_IN_PIN 2
 #define STEERING_IN_PIN 3
 #define THROTTLE_OUT_PIN 8
-#define STEERING_OUT_PIN 7
+#define STEERING_OUT_PIN 9
 #define INTERRUPT_PIN 1
 
 // These bit flags are set in bUpdateFlagsShared to indicate which
@@ -71,17 +71,6 @@ volatile uint16_t unSteeringInShared;
 // to refer to these in loop and the ISR then they would need to be declared volatile
 uint32_t ulThrottleStart;
 uint32_t ulSteeringStart;
-
-// used to ensure we are getting regular throttle signals
-uint32_t ulLastThrottleIn;
-
-#define MODE_FORCEPROGRAM 0
-#define MODE_RUN 1
-#define MODE_QUICK_PROGRAM 2
-#define MODE_FULL_PROGRAM 3
-#define MODE_ERROR 4
-
-uint8_t gMode = MODE_RUN;
 
 Servo servoThrottle;
 Servo servoSteering;
@@ -120,6 +109,7 @@ float ypr[3];        // [yaw, pitch, roll]   yaw/pitch/roll container and gravit
 void processMPU();
 void processInterrupts();
 void processStabilityControl();
+float mod(float a);
 
 // ================================================================
 // ===               INTERRUPT SERVICE ROUTINES                ===
@@ -134,7 +124,7 @@ void dmpDataReady()
 void ISRThrottle()
 {
   // if the pin is high, its a rising edge of the signal pulse, so lets record its value
-  if (digitalRead(STEERING_IN_PIN))
+  if (digitalRead(THROTTLE_IN_PIN))
   {
 
     ulThrottleStart = micros();
@@ -172,8 +162,6 @@ void setup()
 
   servoThrottle.attach(THROTTLE_OUT_PIN);
   servoSteering.attach(STEERING_OUT_PIN);
-
-  ulLastThrottleIn = millis();
 
   // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
@@ -244,10 +232,16 @@ void loop()
   processMPU();
   processInterrupts();
   processStabilityControl();
+
+  //Logging
+  Serial.print("Steering Servo In");
+  Serial.println(unSteeringIn);
+  Serial.print("Throttle Servo In");
+  Serial.println(unThrottleIn);
 }
 
 /*************************************************************************************
- Process MPU
+  Process MPU
  ***********************************************************************************/
 void processMPU()
 {
@@ -339,8 +333,9 @@ void processMPU()
     Serial.println(ypr[2] * 180 / M_PI);
   }
 }
+
 /*************************************************************************************
- Process Interrupts
+  Process Interrupts
  ***********************************************************************************/
 void processInterrupts()
 {
@@ -371,26 +366,44 @@ void processInterrupts()
     // we still have a local copy if we need to use it in bUpdateFlags
     bUpdateFlagsShared = 0;
 
+    //Logging
+    Serial.print("Steering Servo In");
+    Serial.println(unSteeringIn);
+    Serial.print("Throttle Servo In");
+    Serial.println(unThrottleIn);
+
     interrupts();
   }
 }
 
 /*************************************************************************************
-Process Stability Control
+  Process Stability Control
 ***********************************************************************************/
 void processStabilityControl()
 {
+  //Roll angle relative 0 is essentially the error, this may need to be a moving value for what is center
+  unSteeringOut = unSteeringIn + rollAngle * SteeringCutRate;      //proportional controller.
+  unThrottleOut = unThrottleIn - mod(rollAngle) * ThrottleCutRate; //proportional controller.
 
-  if (gMode == MODE_RUN)
+  unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
+  unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
+  Serial.print("Steering Servo OUT");
+  Serial.println(unSteeringOut);
+  Serial.print("Throttle Servo OUT");
+  Serial.println(unThrottleOut);
+
+  //Write output to Servos
+  servoThrottle.writeMicroseconds(unThrottleOut);
+  servoSteering.writeMicroseconds(unSteeringOut);
+
+  bUpdateFlags = 0;
+}
+
+float mod(float a)
+{
+  if (a < 0)
   {
-    unSteeringOut = unSteeringIn + Kd * rollAngle;                   //open loop plus D controller.  May need to be inverted for this car
-    unThrottleOut = unThrottleIn - abs(rollAngle) * ThrottleCutRate; //open loop plus D controller.
-
-    //Write output to Servos
-    servoThrottle.writeMicroseconds(unThrottleOut);
-
-    servoSteering.writeMicroseconds(unSteeringOut);
+    return -a;
   }
-
-bUpdateFlags = 0;
+  return a;
 }
