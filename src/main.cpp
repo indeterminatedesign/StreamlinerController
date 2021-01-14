@@ -37,8 +37,9 @@ const uint16_t throttleMin = 1000;
 const uint16_t throttleMax = 2000;
 const uint16_t throttleCenter = 1000;
 
-const uint16_t SteeringCutRate = 20;
-const uint16_t ThrottleCutRate = 10;
+const uint16_t RollSteeringCutRate = 15;
+const uint16_t YawSteeringCutRate = 10;
+const uint16_t ThrottleCutRate = 20;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -376,17 +377,45 @@ void processInterrupts()
   }
 }
 
+float movingRollCenterAngle = 0;
+float movingYawAngle = 0;
+long stabilityTimerMillis = 0;
+
 /*************************************************************************************
   Process Stability Control
 ***********************************************************************************/
 void processStabilityControl()
 {
-  //Roll angle relative 0 is essentially the error, this may need to be a moving value for what is center
-  unSteeringOut = unSteeringIn + rollAngle * SteeringCutRate;      //proportional controller.
-  unThrottleOut = unThrottleIn - mod(rollAngle) * ThrottleCutRate; //proportional controller.
+
+  if (millis() > stabilityTimerMillis + 10)
+  {
+    movingRollCenterAngle = EMA_function(0.005f, rollAngle, movingRollCenterAngle);
+    movingYawAngle = EMA_function(0.001f, yawAngle, movingYawAngle);
+    stabilityTimerMillis = millis();
+  }
+
+  float rollError = rollAngle - movingRollCenterAngle;
+  float yawError = yawAngle - movingYawAngle;
+
+  unSteeringOut = unSteeringIn + yawError * YawSteeringCutRate;
+  unThrottleOut = unThrottleIn - mod(yawError) * ThrottleCutRate; //proportional controller.
+
+  if (mod(rollError) > 10)
+  {
+    //Add more counter steer if the car is about to roll over and cut throttle
+    unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
+                                                                     // unThrottleOut = throttleMin;
+  }
 
   unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
   unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
+
+  //Safety in that ensures the ESC doesn't turn on the motor prior to the transmitter connecting Which has happened :-(
+  if (unThrottleIn < 1100)
+  {
+    unThrottleOut = 1000;
+  }
+
   Serial.print("Steering Servo OUT");
   Serial.println(unSteeringOut);
   Serial.print("Throttle Servo OUT");
@@ -406,4 +435,9 @@ float mod(float a)
     return -a;
   }
   return a;
+}
+
+float EMA_function(float alpha, int latest, int stored)
+{
+  return alpha * latest + (1 - alpha) * stored;
 }
