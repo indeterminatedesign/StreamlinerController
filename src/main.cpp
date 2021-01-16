@@ -29,17 +29,21 @@ float yawAngle;
 float pitchAngle;
 float rollAngle;
 
-const uint16_t steeringMin = 1000;
-const uint16_t steeringMax = 2000;
+const uint16_t steeringMin = 1100;
+const uint16_t steeringMax = 1900;
 const uint16_t steeringCenter = 1500;
 
 const uint16_t throttleMin = 1000;
 const uint16_t throttleMax = 2000;
 const uint16_t throttleCenter = 1000;
 
-const uint16_t RollSteeringCutRate = 15;
-const uint16_t YawSteeringCutRate = 10;
-const uint16_t ThrottleCutRate = 20;
+const uint16_t auxMin = 1000;
+const uint16_t auxMax = 2000;
+const uint16_t auxCenter = 1000;
+
+const uint16_t RollSteeringCutRate = 10;
+const uint16_t YawSteeringCutRate = 100;
+const uint16_t ThrottleCutRate = 10;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -72,6 +76,7 @@ volatile uint16_t unSteeringInShared;
 // to refer to these in loop and the ISR then they would need to be declared volatile
 uint32_t ulThrottleStart;
 uint32_t ulSteeringStart;
+uint32_t ulAuxStart;
 
 Servo servoThrottle;
 Servo servoSteering;
@@ -235,10 +240,10 @@ void loop()
   processStabilityControl();
 
   //Logging
-  Serial.print("Steering Servo In");
-  Serial.println(unSteeringIn);
-  Serial.print("Throttle Servo In");
-  Serial.println(unThrottleIn);
+  //  Serial.print("Steering Servo In");
+  //  Serial.println(unSteeringIn);
+  //  Serial.print("Throttle Servo In");
+  //  Serial.println(unThrottleIn);
 }
 
 /*************************************************************************************
@@ -320,18 +325,18 @@ void processMPU()
     pitchAngle = ypr[1] * 180 / M_PI;
     rollAngle = ypr[2] * 180 / M_PI;
 
-    Serial.print(aaReal.x);
-    Serial.print("\t");
-    Serial.print(aaReal.y);
-    Serial.print("\t");
-    Serial.println(aaReal.z);
-
-    Serial.print("ypr\t");
-    Serial.print(ypr[0] * 180 / M_PI);
-    Serial.print("\t");
-    Serial.print(ypr[1] * 180 / M_PI);
-    Serial.print("\t");
-    Serial.println(ypr[2] * 180 / M_PI);
+    //    Serial.print(aaReal.x);
+    //    Serial.print("\t");
+    //    Serial.print(aaReal.y);
+    //    Serial.print("\t");
+    //    Serial.println(aaReal.z);
+    //
+    //    Serial.print("ypr\t");
+    //    Serial.print(ypr[0] * 180 / M_PI);
+    //    Serial.print("\t");
+    //    Serial.print(ypr[1] * 180 / M_PI);
+    //    Serial.print("\t");
+    //    Serial.println(ypr[2] * 180 / M_PI);
   }
 }
 
@@ -377,54 +382,67 @@ void processInterrupts()
   }
 }
 
-float movingRollCenterAngle = 0;
-float movingYawAngle = 0;
-long stabilityTimerMillis = 0;
+long stabilityTimerMicros = 0;
+const uint16_t stabilityTime = 10000;
+const float maxYawRate = 2;
+float yawAnglePrevious = 0;
 
 /*************************************************************************************
   Process Stability Control
 ***********************************************************************************/
 void processStabilityControl()
 {
+  float dt = micros() - stabilityTimerMicros;
+  float yawRate = 0; //Yaw angle change with respect to time, degrees/sec
 
-  if (millis() > stabilityTimerMillis + 10)
+  if (dt > stabilityTime)
   {
-    movingRollCenterAngle = EMA_function(0.005f, rollAngle, movingRollCenterAngle);
-    movingYawAngle = EMA_function(0.001f, yawAngle, movingYawAngle);
-    stabilityTimerMillis = millis();
+    yawRate = (yawAngle - yawAnglePrevious) / (dt / 1000000); // Calculate yaw rate degrees/sec
+    Serial.print("Yaw Rate");
+    Serial.println(yawRate);
+    Serial.print("Yaw Angle");
+    Serial.println(yawAngle);
+    Serial.print("Yaw Angle Previous");
+    Serial.println(yawAnglePrevious);
+    Serial.print("Delta T");
+    Serial.println(dt / 1000000);
+
+    yawAnglePrevious = yawAngle; // Store the current yaw value for the next cycle
+    if (yawRate > maxYawRate)
+    {
+      ////float rollError = rollAngle - movingRollCenterAngle;
+      //float yawError = yawAngle - movingYawAngle;
+
+      unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
+      unThrottleOut = unThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
+
+      //  if (mod(rollError) > 10)
+      //  {
+      //    //Add more counter steer if the car is about to roll over and cut throttle
+      //   unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
+      // unThrottleOut = throttleMin;
+      // }
+
+      unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
+      unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
+    }
+    //Safety in that ensures the Arduino doesn't turn on the motor prior to the transmitter connecting which has happened :-(
+    if (unThrottleIn < 1150)
+    {
+      unThrottleOut = throttleMin;
+    }
+
+    Serial.print("Steering Servo OUT");
+    Serial.println(unSteeringOut);
+    Serial.print("Throttle Servo OUT");
+    Serial.println(unThrottleOut);
+
+    //Write output to Servos
+    servoThrottle.writeMicroseconds(unThrottleOut);
+    servoSteering.writeMicroseconds(unSteeringOut);
+
+    stabilityTimerMicros = micros();
   }
-
-  float rollError = rollAngle - movingRollCenterAngle;
-  float yawError = yawAngle - movingYawAngle;
-
-  unSteeringOut = unSteeringIn + yawError * YawSteeringCutRate;
-  unThrottleOut = unThrottleIn - mod(yawError) * ThrottleCutRate; //proportional controller.
-
-  if (mod(rollError) > 10)
-  {
-    //Add more counter steer if the car is about to roll over and cut throttle
-    unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
-                                                                     // unThrottleOut = throttleMin;
-  }
-
-  unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
-  unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
-
-  //Safety in that ensures the ESC doesn't turn on the motor prior to the transmitter connecting Which has happened :-(
-  if (unThrottleIn < 1100)
-  {
-    unThrottleOut = 1000;
-  }
-
-  Serial.print("Steering Servo OUT");
-  Serial.println(unSteeringOut);
-  Serial.print("Throttle Servo OUT");
-  Serial.println(unThrottleOut);
-
-  //Write output to Servos
-  servoThrottle.writeMicroseconds(unThrottleOut);
-  servoSteering.writeMicroseconds(unSteeringOut);
-
   bUpdateFlags = 0;
 }
 
