@@ -42,8 +42,8 @@ const uint16_t auxMax = 2000;
 const uint16_t auxCenter = 1000;
 
 const uint16_t RollSteeringCutRate = 10;
-const uint16_t YawSteeringCutRate = 100;
-const uint16_t ThrottleCutRate = 10;
+const uint16_t YawSteeringCutRate = 6;
+const uint16_t ThrottleCutRate = 7.5;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -161,7 +161,7 @@ void ISRSteering()
 
 void setup()
 {
-  Serial.begin(1152000);
+  Serial.begin(115200);
 
   attachInterrupt(digitalPinToInterrupt(THROTTLE_IN_PIN), ISRThrottle, CHANGE);
   attachInterrupt(digitalPinToInterrupt(STEERING_IN_PIN), ISRSteering, CHANGE);
@@ -240,10 +240,10 @@ void loop()
   processStabilityControl();
 
   //Logging
-  //  Serial.print("Steering Servo In");
-  //  Serial.println(unSteeringIn);
-  //  Serial.print("Throttle Servo In");
-  //  Serial.println(unThrottleIn);
+  Serial.print("Steering Servo In");
+  Serial.println(unSteeringIn);
+  Serial.print("Throttle Servo In");
+  Serial.println(unThrottleIn);
 }
 
 /*************************************************************************************
@@ -383,9 +383,11 @@ void processInterrupts()
 }
 
 long stabilityTimerMicros = 0;
-const uint16_t stabilityTime = 10000;
-const float maxYawRate = 2;
+const uint16_t stabilityTime = 1000;
+const float maxYawRate = 3;
 float yawAnglePrevious = 0;
+float yawRatePrevious = 0;
+uint16_t previousThrottleOut = 0;
 
 /*************************************************************************************
   Process Stability Control
@@ -397,7 +399,11 @@ void processStabilityControl()
 
   if (dt > stabilityTime)
   {
+
     yawRate = (yawAngle - yawAnglePrevious) / (dt / 1000000); // Calculate yaw rate degrees/sec
+    yawRate = EMA_function(0.6F, yawRate, yawRatePrevious);
+    yawRatePrevious = yawRate;
+
     Serial.print("Yaw Rate");
     Serial.println(yawRate);
     Serial.print("Yaw Angle");
@@ -408,12 +414,14 @@ void processStabilityControl()
     Serial.println(dt / 1000000);
 
     yawAnglePrevious = yawAngle; // Store the current yaw value for the next cycle
-    if (yawRate > maxYawRate)
+    if (fabs(yawRate) > maxYawRate)
     {
       ////float rollError = rollAngle - movingRollCenterAngle;
       //float yawError = yawAngle - movingYawAngle;
 
       unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
+      Serial.print("Yaw rate times yaw cut rate");
+      Serial.println(yawRate * YawSteeringCutRate);
       unThrottleOut = unThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
 
       //  if (mod(rollError) > 10)
@@ -422,20 +430,36 @@ void processStabilityControl()
       //   unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
       // unThrottleOut = throttleMin;
       // }
-
-      unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
-      unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
     }
+    else
+    {
+      unSteeringOut = unSteeringIn;
+      unThrottleOut = unThrottleIn;
+    }
+    if (unThrottleOut > previousThrottleOut)
+    {
+      unThrottleOut = EMA_function(0.03F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
+    }
+    previousThrottleOut = unThrottleOut;
+    //Constraint the outputs just in case
+    unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
+    unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
+
     //Safety in that ensures the Arduino doesn't turn on the motor prior to the transmitter connecting which has happened :-(
     if (unThrottleIn < 1150)
     {
       unThrottleOut = throttleMin;
     }
 
+    if (unSteeringIn < 1150)
+    {
+      unSteeringIn = steeringCenter;
+    }
+
     Serial.print("Steering Servo OUT");
     Serial.println(unSteeringOut);
-    Serial.print("Throttle Servo OUT");
-    Serial.println(unThrottleOut);
+    //Serial.print("Throttle Servo OUT");
+    //Serial.println(unThrottleOut);
 
     //Write output to Servos
     servoThrottle.writeMicroseconds(unThrottleOut);
