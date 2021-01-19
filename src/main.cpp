@@ -384,7 +384,7 @@ void processInterrupts()
 
 long stabilityTimerMicros = 0;
 const uint16_t stabilityTime = 1000;
-const float maxYawRate = 3;
+const float maxYawRate = 1;
 float yawAnglePrevious = 0;
 float yawRatePrevious = 0;
 uint16_t previousThrottleOut = 0;
