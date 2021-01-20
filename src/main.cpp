@@ -386,8 +386,7 @@ void processInterrupts()
 }
 
 long stabilityTimerMicros = 0;
-const uint16_t stabilityTime = 5000;
-const float maxYawRate = .1;
+const uint16_t stabilityTime = 10000;
 float yawAnglePrevious = 0;
 uint16_t previousThrottleOut = 0;
 
@@ -414,44 +413,37 @@ void processStabilityControl()
     Serial.println(dt / 1000000);
 
     yawAnglePrevious = yawAngle; // Store the current yaw value for the next cycle
-    if (fabs(yawRate) > maxYawRate)
-    {
 
-      unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
-      Serial.print("Yaw rate times yaw cut rate");
-      Serial.println(yawRate * YawSteeringCutRate);
-      unThrottleOut = unThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
+    unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
+    Serial.print("Yaw rate times yaw cut rate");
+    Serial.println(yawRate * YawSteeringCutRate);
+    unThrottleOut = unThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
 
-      //  if (mod(rollError) > 10)
-      //  {
-      //    //Add more counter steer if the car is about to roll over and cut throttle
-      //   unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
-      // unThrottleOut = throttleMin;
-      // }
-    }
-    else
-    {
-      unSteeringOut = unSteeringIn;
-      unThrottleOut = unThrottleIn;
-    }
+    //  if (mod(rollError) > 10)
+    //  {
+    //    //Add more counter steer if the car is about to roll over and cut throttle
+    //   unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
+    // unThrottleOut = throttleMin;
+    // }
+
     if (unThrottleOut > previousThrottleOut)
     {
       unThrottleOut = previousThrottleOut + ThrottleAccelRate;
-      unThrottleOut = EMA_function(0.06F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
+      // unThrottleOut = EMA_function(0.06F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
     }
-   
+
     previousThrottleOut = unThrottleOut;
     //Constraint the outputs just in case
     unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
     unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
 
     //Safety in that ensures the Arduino doesn't turn on the motor prior to the transmitter connecting which has happened :-(
-    if (unThrottleIn < 1150)
+    if (unThrottleIn < 1050)
     {
       unThrottleOut = throttleMin;
     }
 
-    if (unSteeringIn < 1150)
+    if (unSteeringIn < 1050)
     {
       unSteeringIn = steeringCenter;
     }
