@@ -42,8 +42,9 @@ const uint16_t auxMax = 2000;
 const uint16_t auxCenter = 1000;
 
 const uint16_t RollSteeringCutRate = 10;
-const uint16_t YawSteeringCutRate = 6;
+const uint16_t YawSteeringCutRate = 7.5;
 const uint16_t ThrottleCutRate = 7.5;
+const uint16_t ThrottleAccelRate = 1;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -191,10 +192,12 @@ void setup()
   devStatus = mpu.dmpInitialize();
 
   // supply your own gyro offsets here, scaled for min sensitivity
-  mpu.setXGyroOffset(220);
-  mpu.setYGyroOffset(76);
-  mpu.setZGyroOffset(-85);
-  mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+  mpu.setXGyroOffset(62);
+  mpu.setYGyroOffset(11);
+  mpu.setZGyroOffset(-22);
+  mpu.setXAccelOffset(-1761);
+  mpu.setYAccelOffset(-1089);
+  mpu.setZAccelOffset(976); // 1688 factory default for my test chip
 
   // make sure it worked (returns 0 if so)
   if (devStatus == 0)
@@ -383,10 +386,9 @@ void processInterrupts()
 }
 
 long stabilityTimerMicros = 0;
-const uint16_t stabilityTime = 1000;
-const float maxYawRate = 1;
+const uint16_t stabilityTime = 5000;
+const float maxYawRate = .1;
 float yawAnglePrevious = 0;
-float yawRatePrevious = 0;
 uint16_t previousThrottleOut = 0;
 
 /*************************************************************************************
@@ -401,8 +403,6 @@ void processStabilityControl()
   {
 
     yawRate = (yawAngle - yawAnglePrevious) / (dt / 1000000); // Calculate yaw rate degrees/sec
-    yawRate = EMA_function(0.6F, yawRate, yawRatePrevious);
-    yawRatePrevious = yawRate;
 
     Serial.print("Yaw Rate");
     Serial.println(yawRate);
@@ -416,8 +416,6 @@ void processStabilityControl()
     yawAnglePrevious = yawAngle; // Store the current yaw value for the next cycle
     if (fabs(yawRate) > maxYawRate)
     {
-      ////float rollError = rollAngle - movingRollCenterAngle;
-      //float yawError = yawAngle - movingYawAngle;
 
       unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
       Serial.print("Yaw rate times yaw cut rate");
@@ -438,8 +436,10 @@ void processStabilityControl()
     }
     if (unThrottleOut > previousThrottleOut)
     {
-      unThrottleOut = EMA_function(0.03F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
+      unThrottleOut = previousThrottleOut + ThrottleAccelRate;
+      unThrottleOut = EMA_function(0.06F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
     }
+   
     previousThrottleOut = unThrottleOut;
     //Constraint the outputs just in case
     unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
