@@ -20,9 +20,9 @@ MPU6050 mpu;
 // Two channels out
 
 //XYZ Acceleration Values
-uint16_t xAxisAccel;
-uint16_t yAxisAccel;
-uint16_t zAxisAccel;
+int16_t xAxisAccel;
+int16_t yAxisAccel;
+int16_t zAxisAccel;
 
 //Yaw, Pitch, and Roll Angles
 float yawAngle;
@@ -44,7 +44,7 @@ const uint16_t auxCenter = 1000;
 const uint16_t RollSteeringCutRate = 10;
 const uint16_t YawSteeringCutRate = 7.5;
 const uint16_t ThrottleCutRate = 7.5;
-const uint16_t ThrottleAccelRate = 1;
+const uint16_t ThrottleAccelRate = 5;
 
 //////////////////////////////////////////////////////////////////
 // DIGITAL PINS
@@ -85,11 +85,11 @@ Servo servoSteering;
 // create local variables to hold a local copies of the channel inputs
 // these are declared static so that thier values will be retained
 // between calls to loop.
-uint16_t unThrottleIn;
-uint16_t unSteeringIn;
+uint16_t ThrottleIn;
+uint16_t SteeringIn;
 
-uint16_t unThrottleOut;
-uint16_t unSteeringOut;
+uint16_t ThrottleOut;
+uint16_t SteeringOut;
 
 // local copy of update flags
 uint8_t bUpdateFlags;
@@ -244,9 +244,9 @@ void loop()
 
   //Logging
   Serial.print("Steering Servo In");
-  Serial.println(unSteeringIn);
+  Serial.println(SteeringIn);
   Serial.print("Throttle Servo In");
-  Serial.println(unThrottleIn);
+  Serial.println(ThrottleIn);
 }
 
 /*************************************************************************************
@@ -363,12 +363,12 @@ void processInterrupts()
 
     if (bUpdateFlags & THROTTLE_FLAG)
     {
-      unThrottleIn = unThrottleInShared;
+      ThrottleIn = unThrottleInShared;
     }
 
     if (bUpdateFlags & STEERING_FLAG)
     {
-      unSteeringIn = unSteeringInShared;
+      SteeringIn = unSteeringInShared;
     }
 
     // clear shared copy of updated flags as we have already taken the updates
@@ -377,9 +377,9 @@ void processInterrupts()
 
     //Logging
     Serial.print("Steering Servo In");
-    Serial.println(unSteeringIn);
+    Serial.println(SteeringIn);
     Serial.print("Throttle Servo In");
-    Serial.println(unThrottleIn);
+    Serial.println(ThrottleIn);
 
     interrupts();
   }
@@ -389,6 +389,7 @@ long stabilityTimerMicros = 0;
 const uint16_t stabilityTime = 10000;
 float yawAnglePrevious = 0;
 uint16_t previousThrottleOut = 0;
+
 
 /*************************************************************************************
   Process Stability Control
@@ -414,48 +415,46 @@ void processStabilityControl()
 
     yawAnglePrevious = yawAngle; // Store the current yaw value for the next cycle
 
-    unSteeringOut = unSteeringIn - yawRate * YawSteeringCutRate;
+    SteeringOut = SteeringIn - yawRate * YawSteeringCutRate;
     Serial.print("Yaw rate times yaw cut rate");
     Serial.println(yawRate * YawSteeringCutRate);
-    unThrottleOut = unThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
+    ThrottleOut = ThrottleIn - mod(yawRate) * ThrottleCutRate; //proportional controller.
 
-    //  if (mod(rollError) > 10)
-    //  {
-    //    //Add more counter steer if the car is about to roll over and cut throttle
-    //   unSteeringOut += unSteeringIn + rollError * RollSteeringCutRate; //proportional controller.
-    // unThrottleOut = throttleMin;
-    // }
-
-    if (unThrottleOut > previousThrottleOut)
+    if (xAxisAccel > 500)  //Traction control based on max accel rate
     {
-      unThrottleOut = previousThrottleOut + ThrottleAccelRate;
-      // unThrottleOut = EMA_function(0.06F, unThrottleOut, previousThrottleOut); //Delay throttle through EMA if it is increasing, but throttle cuts are immediate.
+      ThrottleOut = ThrottleIn - xAxisAccel * ThrottleCutRate;
+    }
+    
+    if (ThrottleOut > previousThrottleOut)
+    {
+      ThrottleOut = previousThrottleOut + ThrottleAccelRate;
     }
 
-    previousThrottleOut = unThrottleOut;
+    previousThrottleOut = ThrottleOut;
     //Constraint the outputs just in case
-    unSteeringOut = constrain(unSteeringOut, steeringMin, steeringMax);
-    unThrottleOut = constrain(unThrottleOut, throttleMin, throttleMax);
+    SteeringOut = constrain(SteeringOut, steeringMin, steeringMax);
+    ThrottleOut = constrain(ThrottleOut, throttleMin, throttleMax);
 
     //Safety in that ensures the Arduino doesn't turn on the motor prior to the transmitter connecting which has happened :-(
-    if (unThrottleIn < 1050)
+    if (ThrottleIn < 1050)
     {
-      unThrottleOut = throttleMin;
+      ThrottleOut = throttleMin;
     }
 
-    if (unSteeringIn < 1050)
+    //Center Steering if transmitter signal lost
+    if (SteeringIn < 995)
     {
-      unSteeringIn = steeringCenter;
+      SteeringIn = steeringCenter;
     }
 
     Serial.print("Steering Servo OUT");
-    Serial.println(unSteeringOut);
+    Serial.println(SteeringOut);
     //Serial.print("Throttle Servo OUT");
     //Serial.println(unThrottleOut);
 
     //Write output to Servos
-    servoThrottle.writeMicroseconds(unThrottleOut);
-    servoSteering.writeMicroseconds(unSteeringOut);
+    servoThrottle.writeMicroseconds(ThrottleOut);
+    servoSteering.writeMicroseconds(SteeringOut);
 
     stabilityTimerMicros = micros();
   }
@@ -464,14 +463,10 @@ void processStabilityControl()
 
 float mod(float a)
 {
+  // Had issues with the QtPy using FABS to get absolute value
   if (a < 0)
   {
     return -a;
   }
   return a;
-}
-
-float EMA_function(float alpha, int latest, int stored)
-{
-  return alpha * latest + (1 - alpha) * stored;
 }
